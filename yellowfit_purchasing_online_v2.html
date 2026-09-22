@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>YellowFit Purchasing</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f5f6f8;color:#202124;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+header{background:#fff;padding:20px 16px 16px;border-bottom:1px solid #e4e6e9;position:sticky;top:0;z-index:5}
+h1{font-size:22px;margin:0}.sub{color:#6b7280;font-size:13px;margin-top:4px}
+main{max-width:760px;margin:auto;padding:16px 16px 100px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.card,.item,.panel{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:15px;margin:10px 0}
+.card{cursor:pointer}.card .icon{font-size:28px}.card strong{display:block;margin-top:6px}.muted{font-size:12px;color:#777}
+.title{font-weight:800;margin:18px 0 8px;text-transform:uppercase;font-size:13px;color:#555;letter-spacing:.04em}
+.search,input,select{width:100%;padding:12px;border:1px solid #d8dbe0;border-radius:10px;font-size:15px;background:#fff}
+.search{margin:12px 0}
+.itemrow{display:flex;justify-content:space-between;gap:10px;align-items:center}.itemname{font-weight:700}.unit{font-size:12px;color:#666;margin-top:3px}
+.qty{display:flex;align-items:center;gap:7px}.qty button{border:0;background:#eee;border-radius:8px;padding:7px 11px;font-weight:800}.qtyinput{width:68px;text-align:center;padding:8px 5px;border:1px solid #d8dbe0;border-radius:8px;font-size:16px;font-weight:800;background:#fff}
+button{border:0;border-radius:10px;padding:11px 13px;font-weight:750;cursor:pointer}
+button:disabled{opacity:.5;cursor:not-allowed}
+.primary{background:#202124;color:#fff}.success{background:#25d366;color:#fff}.secondary{background:#eee}.danger{background:#fee2e2;color:#991b1b}
+.actions{display:flex;gap:8px;margin-top:12px}.actions button{flex:1}
+.back{margin-bottom:8px}.notice{background:#fff8df;border:1px solid #f0df9a;padding:12px;border-radius:10px;font-size:13px;margin:10px 0}
+.error{background:#fff0f0;border:1px solid #f3b4b4;color:#8a1c1c;padding:12px;border-radius:10px;font-size:13px;margin:10px 0}
+.successbox{background:#eefbf2;border:1px solid #b9e6c5;color:#176b2e;padding:12px;border-radius:10px;font-size:13px;margin:10px 0}
+label{display:block;font-size:13px;font-weight:700;margin:10px 0 6px}
+.empty{text-align:center;color:#777;padding:30px 10px}
+.smallbtn{padding:7px 9px;font-size:12px}
+.pill{font-size:11px;padding:4px 7px;border-radius:8px;background:#e9f7ee;color:#187a3d}.off{background:#eee;color:#666}
+.loading{text-align:center;padding:35px;color:#777}
+.status{font-size:11px;padding:4px 7px;border-radius:8px;background:#e9f7ee;color:#187a3d;float:right}
+textarea{width:100%;min-height:190px;padding:12px;border:1px solid #d8dbe0;border-radius:10px;font-family:inherit}
+@media(max-width:520px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>YellowFit</h1>
+  <div class="sub">Purchasing Catalog <span id="connectionStatus" class="status">Connecting...</span></div>
+</header>
+<main id="app"><div class="loading">Menghubungkan ke database...</div></main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const SUPABASE_URL = "https://lutabjsxkkwlkxriyrds.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_11BfIkV9YTcZf3xs9iLiIw_zZeoBtIa";
+
+const client = supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+
+let db = { suppliers: [], items: [] };
+let currentSupplier = null;
+let cart = {};
+
+function esc(s){
+  return String(s ?? "").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
+}
+
+function setStatus(ok){
+  const el=document.getElementById("connectionStatus");
+  if(!el)return;
+  el.textContent=ok?"Online":"Offline";
+  el.style.background=ok?"#e9f7ee":"#fee2e2";
+  el.style.color=ok?"#187a3d":"#991b1b";
+}
+
+async function loadData(){
+  const [{data:suppliers,error:sError},{data:items,error:iError}] = await Promise.all([
+    client.from("suppliers").select("*").order("name"),
+    client.from("items").select("*").order("name")
+  ]);
+  if(sError) throw sError;
+  if(iError) throw iError;
+  db.suppliers=suppliers||[];
+  db.items=items||[];
+  setStatus(true);
+}
+
+function getSupplier(id){return db.suppliers.find(s=>s.id===id)}
+function activeItems(id){return db.items.filter(i=>i.supplier_id===id&&i.active)}
+
+async function refreshAndRender(){
+  await loadData();
+  render();
+}
+
+function showError(message){
+  document.getElementById("app").innerHTML =
+    `<div class="error"><b>Terjadi masalah:</b><br>${esc(message)}<div class="actions"><button class="secondary" onclick="boot()">Coba Lagi</button></div></div>`;
+}
+
+async function boot(){
+  document.getElementById("app").innerHTML='<div class="loading">Menghubungkan ke database...</div>';
+  try{
+    await loadData();
+    render();
+  }catch(e){
+    console.error(e);
+    setStatus(false);
+    showError(e.message || "Tidak dapat terhubung ke Supabase.");
+  }
+}
+
+function render(){
+  if(currentSupplier) renderSupplier();
+  else renderHome();
+}
+
+function renderHome(){
+  let html=`<div class="title">Pilih Supplier</div><div class="grid">`;
+  db.suppliers.filter(s=>s.active).forEach(s=>{
+    html+=`<div class="card" onclick="showSupplier('${s.id}')">
+      <div class="icon">${esc(s.icon||"📦")}</div>
+      <strong>${esc(s.name)}</strong>
+      <span class="muted">${activeItems(s.id).length} items tersedia</span>
+    </div>`;
+  });
+  html+=`</div>
+  <div class="title">Cara menggunakan</div>
+  <div class="panel">
+    <b>1.</b> Pilih supplier.<br>
+    <b>2.</b> Pilih item dan masukkan jumlah.<br>
+    <b>3.</b> Pilih hari pengiriman.<br>
+    <b>4.</b> Copy order dan kirim ke chat Anda.<br>
+    <b>5.</b> Gunakan <b>Kelola Katalog</b> untuk menambah/mengubah daftar barang.
+  </div>
+  <button class="secondary" style="width:100%" onclick="manage()">⚙️ Kelola Katalog</button>
+  <div class="notice">Katalog ini terhubung ke database online. Perubahan yang disimpan akan terlihat oleh purchasing lain yang membuka website.</div>`;
+  document.getElementById("app").innerHTML=html;
+}
+
+function showSupplier(id){currentSupplier=id;cart={};render()}
+function home(){currentSupplier=null;cart={};render()}
+
+function renderSupplier(){
+  const s=getSupplier(currentSupplier);
+  let html=`<button class="secondary back" onclick="home()">← Semua Supplier</button>
+  <h2>${esc(s.icon||"📦")} ${esc(s.name)}</h2>
+  <div class="muted">${activeItems(s.id).length} item tersedia</div>
+  <input id="itemSearch" class="search" placeholder="🔍 Cari item..." oninput="filterItems(this.value)">
+  <div id="itemList"></div>
+  <button class="success" style="width:100%;margin-top:8px" onclick="reviewOrder()">📋 Review & Copy Order</button>
+  <button class="secondary" style="width:100%;margin-top:8px" onclick="manageSupplierItems('${s.id}')">⚙️ Kelola Item ${esc(s.name)}</button>`;
+  document.getElementById("app").innerHTML=html;
+  filterItems("");
+}
+
+function filterItems(q){
+  const box=document.getElementById("itemList");
+  if(!box)return;
+  const items=activeItems(currentSupplier).filter(i=>i.name.toLowerCase().includes(q.toLowerCase()));
+  box.innerHTML=items.length?items.map(i=>{
+    const n=cart[i.id]||0;
+    return `<div class="item"><div class="itemrow">
+      <div><div class="itemname">${esc(i.name)}</div><div class="unit">${esc(i.unit)}</div></div>
+      <div class="qty">
+        <button onclick="changeQty('${i.id}',-1)">−</button>
+        <input class="qtyinput" type="number" min="0" step="1" inputmode="decimal" value="${n}" aria-label="Jumlah ${esc(i.name)}"
+          onchange="setQty('${i.id}',this.value)"
+          oninput="setQty('${i.id}',this.value)">
+        <button onclick="changeQty('${i.id}',1)">+</button>
+      </div>
+    </div></div>`;
+  }).join(""):`<div class="empty">Item tidak ditemukan.</div>`;
+}
+
+function changeQty(id,n){
+  cart[id]=Math.max(0,(cart[id]||0)+n);
+  if(!cart[id])delete cart[id];
+  filterItems(document.getElementById("itemSearch")?.value||"");
+}
+
+function setQty(id,value){
+  let n=parseInt(value,10);
+  if(!Number.isFinite(n)||n<0)n=0;
+  cart[id]=n;
+  if(!n)delete cart[id];
+}
+
+function reviewOrder(){
+  const ids=Object.keys(cart);
+  if(!ids.length){alert("Belum ada item yang dipilih.");return}
+  const s=getSupplier(currentSupplier);
+  let html=`<button class="secondary back" onclick="renderSupplier()">← Kembali ke ${esc(s.name)}</button>
+  <h2>📋 Order ${esc(s.name)}</h2><div class="panel">`;
+  ids.forEach(id=>{
+    const i=db.items.find(x=>x.id===id);
+    if(i) html+=`<div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #eee"><span>${esc(i.name)}</span><b>${cart[id]} ${esc(i.unit)}</b></div>`;
+  });
+  html+=`<label>📅 Hari Pengiriman</label>
+  <select id="deliveryDay">
+    <option value="">Pilih hari...</option>
+    <option>Senin</option><option>Selasa</option><option>Rabu</option><option>Kamis</option>
+    <option>Jumat</option><option>Sabtu</option><option>Minggu</option>
+  </select>
+  <div class="actions"><button class="primary" onclick="copyOrder()">📋 Copy Order</button></div>
+  <div class="notice">Setelah di-copy, paste order ini ke chat pribadi Anda untuk diperiksa sebelum diteruskan ke grup supplier.</div>
+  </div>`;
+  document.getElementById("app").innerHTML=html;
+}
+
+async function copyOrder(){
+  const day=document.getElementById("deliveryDay").value;
+  if(!day){alert("Pilih hari pengiriman terlebih dahulu.");return}
+  const s=getSupplier(currentSupplier);
+  const lines=Object.entries(cart).map(([id,q])=>{
+    const i=db.items.find(x=>x.id===id);
+    return `${i.name} — ${q} ${i.unit}`;
+  }).join("\n");
+  const text=`🛒 ORDER YELLOWFIT\nSupplier: ${s.name}\nHari Pengiriman: ${day}\n\n${lines}\n\nTerima kasih.`;
+  try{
+    await navigator.clipboard.writeText(text);
+    alert("Order berhasil di-copy. Silakan paste ke chat Anda.");
+  }catch(e){
+    prompt("Copy order berikut:",text);
+  }
+}
+
+/* ---------- CATALOG MANAGEMENT ---------- */
+
+function manage(){
+  currentSupplier=null;
+  document.getElementById("app").innerHTML=`<button class="secondary back" onclick="home()">← Purchasing</button>
+  <h2>⚙️ Kelola Katalog</h2>
+  <div class="notice">Perubahan di sini tersimpan ke database online dan akan terlihat oleh seluruh purchasing.</div>
+  <div class="actions">
+    <button class="primary" onclick="newItem()">＋ Tambah Item</button>
+    <button class="secondary" onclick="manageSuppliers()">Supplier</button>
+  </div>
+  <input class="search" id="manageSearch" placeholder="🔍 Cari item..." oninput="renderManageItems(this.value)">
+  <div id="manageItems"></div>`;
+  renderManageItems("");
+}
+
+function renderManageItems(q){
+  const box=document.getElementById("manageItems");if(!box)return;
+  const items=db.items.filter(i=>i.name.toLowerCase().includes(q.toLowerCase()));
+  if(!items.length){box.innerHTML='<div class="empty">Tidak ada item.</div>';return}
+  box.innerHTML=items.map(i=>{
+    const s=getSupplier(i.supplier_id);
+    return `<div class="item"><div class="itemrow">
+      <div><div class="itemname">${esc(i.name)}</div><div class="unit">${esc(s?.icon||"")} ${esc(s?.name||"—")} · ${esc(i.unit)}</div></div>
+      <div><span class="pill ${i.active?'':'off'}">${i.active?'Active':'Inactive'}</span></div>
+    </div>
+    <div class="actions">
+      <button class="secondary smallbtn" onclick="editItem('${i.id}')">Edit</button>
+      <button class="${i.active?'danger':'success'} smallbtn" onclick="toggleItem('${i.id}')">${i.active?'Nonaktifkan':'Aktifkan'}</button>
+    </div></div>`;
+  }).join("");
+}
+
+function newItem(){itemForm(null)}
+function editItem(id){itemForm(id)}
+
+function itemForm(id){
+  const i=id?db.items.find(x=>x.id===id):{name:"",supplier_id:db.suppliers.find(s=>s.active)?.id||"",unit:"kg",active:true};
+  const suppliers=db.suppliers.filter(s=>s.active || s.id===i.supplier_id);
+  document.getElementById("app").innerHTML=`<button class="secondary back" onclick="manage()">← Kelola Katalog</button>
+  <h2>${id?'✏️ Edit Item':'＋ Tambah Item'}</h2>
+  <div class="panel">
+    <label>Nama Item</label>
+    <input id="fName" value="${esc(i.name)}" placeholder="Contoh: Daun Bawang">
+    <label>Supplier</label>
+    <select id="fSupplier">${suppliers.map(s=>`<option value="${s.id}" ${s.id===i.supplier_id?'selected':''}>${esc(s.icon||"📦")} ${esc(s.name)}</option>`).join("")}</select>
+    <label>Satuan</label>
+    <input id="fUnit" value="${esc(i.unit)}" placeholder="kg / pcs / botol / ikat">
+    <div class="actions">
+      <button class="primary" onclick="saveItem('${id||""}')">Simpan</button>
+      <button class="secondary" onclick="manage()">Batal</button>
+    </div>
+  </div>`;
+}
+
+async function saveItem(id){
+  const name=document.getElementById("fName").value.trim();
+  const supplier_id=document.getElementById("fSupplier").value;
+  const unit=document.getElementById("fUnit").value.trim()||"unit";
+  if(!name){alert("Nama item wajib diisi.");return}
+  try{
+    let error;
+    if(id){
+      ({error}=await client.from("items").update({name,supplier_id,unit}).eq("id",id));
+    }else{
+      ({error}=await client.from("items").insert({name,supplier_id,unit,active:true}));
+    }
+    if(error)throw error;
+    await refreshAndRender();
+    alert(id?"Item berhasil diperbarui.":"Item berhasil ditambahkan.");
+    manage();
+  }catch(e){
+    console.error(e);
+    alert("Gagal menyimpan item: "+(e.message||"Unknown error"));
+  }
+}
+
+async function toggleItem(id){
+  const i=db.items.find(x=>x.id===id);
+  if(!i)return;
+  const action=i.active?"menonaktifkan":"mengaktifkan";
+  if(!confirm(`Anda akan ${action} "${i.name}". Perubahan akan terlihat pada katalog. Lanjutkan?`))return;
+  try{
+    const {error}=await client.from("items").update({active:!i.active}).eq("id",id);
+    if(error)throw error;
+    await refreshAndRender();
+    manage();
+  }catch(e){
+    alert("Gagal mengubah status item: "+(e.message||"Unknown error"));
+  }
+}
+
+function manageSupplierItems(id){
+  currentSupplier=id;
+  document.getElementById("app").innerHTML=`<button class="secondary back" onclick="renderSupplier()">← ${esc(getSupplier(id)?.name||"Supplier")}</button>
+  <h2>⚙️ Kelola ${esc(getSupplier(id)?.name||"Supplier")}</h2>
+  <button class="primary" style="width:100%" onclick="itemForm(null)">＋ Tambah Item</button>
+  <div id="supplierManageList"></div>`;
+  renderSupplierManageList(id);
+}
+
+function renderSupplierManageList(id){
+  const box=document.getElementById("supplierManageList");if(!box)return;
+  const items=db.items.filter(i=>i.supplier_id===id);
+  box.innerHTML=items.length?items.map(i=>`<div class="item"><div class="itemrow">
+    <div><b>${esc(i.name)}</b><div class="unit">${esc(i.unit)}</div></div>
+    <span class="pill ${i.active?'':'off'}">${i.active?'Active':'Inactive'}</span>
+  </div><div class="actions">
+    <button class="secondary smallbtn" onclick="editItem('${i.id}')">Edit</button>
+    <button class="${i.active?'danger':'success'} smallbtn" onclick="toggleItemFromSupplier('${i.id}','${id}')">${i.active?'Nonaktifkan':'Aktifkan'}</button>
+  </div></div>`).join(""):`<div class="empty">Belum ada item.</div>`;
+}
+
+async function toggleItemFromSupplier(itemId,supplierId){
+  const i=db.items.find(x=>x.id===itemId);if(!i)return;
+  const action=i.active?"menonaktifkan":"mengaktifkan";
+  if(!confirm(`Anda akan ${action} "${i.name}". Lanjutkan?`))return;
+  try{
+    const {error}=await client.from("items").update({active:!i.active}).eq("id",itemId);
+    if(error)throw error;
+    await refreshAndRender();
+    manageSupplierItems(supplierId);
+  }catch(e){alert("Gagal mengubah status item: "+(e.message||"Unknown error"))}
+}
+
+/* ---------- SUPPLIER MANAGEMENT ---------- */
+
+function manageSuppliers(){
+  document.getElementById("app").innerHTML=`<button class="secondary back" onclick="manage()">← Kelola Katalog</button>
+  <h2>🏪 Supplier</h2>
+  <div class="notice">Supplier adalah daftar tetap yang dipilih saat menambahkan item.</div>
+  <button class="primary" style="width:100%" onclick="supplierForm()">＋ Tambah Supplier</button>
+  <div id="supplierList"></div>`;
+  renderSupplierList();
+}
+
+function renderSupplierList(){
+  document.getElementById("supplierList").innerHTML=db.suppliers.map(s=>`
+    <div class="card">
+      <div class="itemrow">
+        <div>
+          <span style="font-size:25px">${esc(s.icon||"📦")}</span> <b>${esc(s.name)}</b>
+          <div class="muted">${activeItems(s.id).length} active items</div>
+          <div style="margin-top:5px"><span class="pill ${s.active?'':'off'}">${s.active?'Active':'Inactive'}</span></div>
+        </div>
+        <button class="secondary smallbtn" onclick="supplierForm('${s.id}')">Edit</button>
+      </div>
+    </div>`).join("");
+}
+
+function supplierForm(id){
+  const s=id?getSupplier(id):{name:"",icon:"📦",active:true};
+  document.getElementById("app").innerHTML=`<button class="secondary back" onclick="manageSuppliers()">← Supplier</button>
+  <h2>${id?'✏️ Edit Supplier':'＋ Tambah Supplier'}</h2>
+  <div class="panel">
+    <label>Nama Supplier</label>
+    <input id="sName" value="${esc(s.name)}" placeholder="Contoh: Bumbu">
+    <label>Icon</label>
+    <input id="sIcon" value="${esc(s.icon||"📦")}" placeholder="📦">
+    <label>Status</label>
+    <select id="sActive">
+      <option value="true" ${s.active?'selected':''}>Active</option>
+      <option value="false" ${!s.active?'selected':''}>Inactive</option>
+    </select>
+    <div class="actions">
+      <button class="primary" onclick="saveSupplier('${id||""}')">Simpan</button>
+      <button class="secondary" onclick="manageSuppliers()">Batal</button>
+    </div>
+  </div>`;
+}
+
+async function saveSupplier(id){
+  const name=document.getElementById("sName").value.trim();
+  const icon=document.getElementById("sIcon").value.trim()||"📦";
+  const active=document.getElementById("sActive").value==="true";
+  if(!name){alert("Nama supplier wajib diisi.");return}
+  try{
+    let error;
+    if(id){
+      ({error}=await client.from("suppliers").update({name,icon,active}).eq("id",id));
+    }else{
+      ({error}=await client.from("suppliers").insert({name,icon,active}));
+    }
+    if(error)throw error;
+    await refreshAndRender();
+    alert(id?"Supplier berhasil diperbarui.":"Supplier berhasil ditambahkan.");
+    manageSuppliers();
+  }catch(e){
+    console.error(e);
+    alert("Gagal menyimpan supplier: "+(e.message||"Unknown error"));
+  }
+}
+
+boot();
+</script>
+</body>
+</html>
