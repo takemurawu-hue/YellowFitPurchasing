@@ -30,6 +30,7 @@ label{display:block;font-size:13px;font-weight:700;margin:10px 0 6px}
 .smallbtn{padding:7px 9px;font-size:12px}
 .pill{font-size:11px;padding:4px 7px;border-radius:8px;background:#e9f7ee;color:#187a3d}.off{background:#eee;color:#666}
 .loading{text-align:center;padding:35px;color:#777}
+.csvbox{background:#f8fafc;border:1px dashed #cbd5e1;padding:14px;border-radius:12px;margin:10px 0}.csvpreview{max-height:320px;overflow:auto;border:1px solid #e5e7eb;border-radius:10px;margin-top:10px}.csvtable{width:100%;border-collapse:collapse;font-size:12px}.csvtable th,.csvtable td{padding:8px;border-bottom:1px solid #eee;text-align:left;white-space:nowrap}.csvtable th{position:sticky;top:0;background:#f8fafc}.badrow{background:#fff0f0}.goodrow{background:#eefbf2}
 .status{font-size:11px;padding:4px 7px;border-radius:8px;background:#e9f7ee;color:#187a3d;float:right}
 textarea{width:100%;min-height:190px;padding:12px;border:1px solid #d8dbe0;border-radius:10px;font-family:inherit}
 @media(max-width:520px){.grid{grid-template-columns:1fr}}
@@ -52,6 +53,10 @@ const client = supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 let db = { suppliers: [], items: [] };
 let currentSupplier = null;
 let cart = {};
+let sorterLines = [];
+let sorterResults = [];
+let sorterDay = "";
+let selectedOrderItems = {};
 
 function esc(s){
   return String(s ?? "").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
@@ -108,7 +113,78 @@ function render(){
 }
 
 function renderHome(){
-  let html=`<div class="title">Pilih Supplier</div><div class="grid">`;
+  const items=db.items.filter(i=>i.active).sort((a,b)=>a.name.localeCompare(b.name,'id'));
+  let html=`<h2>🛒 Buat Order</h2>
+  <div class="panel">
+    <div class="title" style="margin-top:0">Pilih Item yang Mau Dipesan</div>
+    <div class="muted">Centang item dari katalog. Setelah dicentang, masukkan jumlah yang ingin dipesan. Supplier akan dipilah otomatis oleh sistem.</div>
+    <input id="orderItemSearch" class="search" placeholder="🔍 Cari nama item..." oninput="filterOrderItems(this.value)">
+    <div id="orderItemList"></div>
+    <label>📅 Hari Pengiriman</label>
+    <select id="sorterDay">
+      <option value="">Pilih hari...</option>
+      <option>Senin</option><option>Selasa</option><option>Rabu</option><option>Kamis</option>
+      <option>Jumat</option><option>Sabtu</option><option>Minggu</option>
+    </select>
+    <button class="primary" style="width:100%;margin-top:10px" onclick="generateSortedOrder()">🔎 Sortir & Generate Order</button>
+  </div>
+  <div id="sorterResult"></div>
+
+  <div class="title">Menu Lain</div>
+  <button class="secondary" style="width:100%;margin-bottom:8px" onclick="showSupplierCatalog()">📦 Lihat Katalog per Supplier</button>
+  <button class="secondary" style="width:100%;margin-bottom:8px" onclick="manage()">⚙️ Kelola Katalog</button>
+  <div class="notice">Kamu tidak perlu mencari supplier. Cukup centang item dan masukkan jumlah; sistem akan otomatis mengelompokkan order berdasarkan supplier.</div>`;
+  document.getElementById("app").innerHTML=html;
+  filterOrderItems("");
+}
+
+function filterOrderItems(q){
+  const box=document.getElementById("orderItemList");
+  if(!box)return;
+  const query=String(q||'').trim().toLowerCase();
+  const items=db.items.filter(i=>i.active && i.name.toLowerCase().includes(query))
+    .sort((a,b)=>a.name.localeCompare(b.name,'id'));
+
+  box.innerHTML=items.length?items.map(i=>{
+    const selected=Object.prototype.hasOwnProperty.call(selectedOrderItems,i.id);
+    const qty=selectedOrderItems[i.id]??'';
+    return `<div class="item" style="padding:12px">
+      <div class="itemrow" style="align-items:center">
+        <label style="display:flex;align-items:center;gap:10px;margin:0;flex:1;cursor:pointer">
+          <input type="checkbox" style="width:20px;height:20px;flex:0 0 auto" ${selected?'checked':''}
+            onchange="toggleOrderItem('${i.id}',this.checked)">
+          <span>
+            <span class="itemname" style="display:block">${esc(i.name)}</span>
+            <span class="unit">${esc(i.unit)}</span>
+          </span>
+        </label>
+        <input class="qtyinput" style="${selected?'display:block':'display:none'}" type="number" min="0" step="any" inputmode="decimal"
+          value="${esc(qty)}" placeholder="Qty" aria-label="Jumlah ${esc(i.name)}"
+          oninput="setOrderItemQty('${i.id}',this.value)">
+      </div>
+    </div>`;
+  }).join(""):`<div class="empty">Item tidak ditemukan.</div>`;
+}
+
+function toggleOrderItem(id,checked){
+  if(checked){
+    if(!Object.prototype.hasOwnProperty.call(selectedOrderItems,id)) selectedOrderItems[id]='';
+  }else{
+    delete selectedOrderItems[id];
+  }
+  const q=document.getElementById('orderItemSearch')?.value||'';
+  filterOrderItems(q);
+}
+
+function setOrderItemQty(id,value){
+  if(Object.prototype.hasOwnProperty.call(selectedOrderItems,id)){
+    selectedOrderItems[id]=String(value??'').replace(',','.');
+  }
+}
+
+function showSupplierCatalog(){
+  let html=`<button class="secondary back" onclick="home()">← Buat Order</button>
+  <div class="title">Katalog per Supplier</div><div class="grid">`;
   db.suppliers.filter(s=>s.active).forEach(s=>{
     html+=`<div class="card" onclick="showSupplier('${s.id}')">
       <div class="icon">${esc(s.icon||"📦")}</div>
@@ -116,19 +192,151 @@ function renderHome(){
       <span class="muted">${activeItems(s.id).length} items tersedia</span>
     </div>`;
   });
-  html+=`</div>
-  <div class="title">Cara menggunakan</div>
-  <div class="panel">
-    <b>1.</b> Pilih supplier.<br>
-    <b>2.</b> Pilih item dan masukkan jumlah.<br>
-    <b>3.</b> Pilih hari pengiriman.<br>
-    <b>4.</b> Copy order dan kirim ke chat Anda.<br>
-    <b>5.</b> Gunakan <b>Kelola Katalog</b> untuk menambah/mengubah daftar barang.
-  </div>
-  <button class="secondary" style="width:100%" onclick="manage()">⚙️ Kelola Katalog</button>
-  <div class="notice">Katalog ini terhubung ke database online. Perubahan yang disimpan akan terlihat oleh purchasing lain yang membuka website.</div>`;
+  html+=`</div>`;
   document.getElementById("app").innerHTML=html;
 }
+
+function normalizeItemName(s){
+  return String(s||'').trim().replace(/\s+/g,' ').toLowerCase();
+}
+
+function parseSorterLine(line){
+  let raw=String(line||'').trim();
+  if(!raw)return null;
+  // Accept: Item | 80, Item - 80, Item — 80, or Item<TAB>80.
+  let item='', qtyText='';
+  const parts=raw.split(/\s*[|—–]\s*|\s+-\s+/);
+  if(parts.length>=2){
+    item=parts[0].trim(); qtyText=parts.slice(1).join(' ').trim();
+  }else if(raw.includes('\t')){
+    const p=raw.split('\t'); item=p[0].trim(); qtyText=p.slice(1).join(' ').trim();
+  }else{
+    const m=raw.match(/^(.*?)(?:\s+)(\d+(?:[.,]\d+)?)\s*(?:kg|g|gr|gram|ml|l|liter|pcs|pc|ikat|botol|pack|dus|box)?$/i);
+    if(m){item=m[1].trim();qtyText=m[2];}
+    else item=raw;
+  }
+  let qty='';
+  if(qtyText){
+    const m=qtyText.match(/\d+(?:[.,]\d+)?/);
+    if(m) qty=m[0].replace(',','.');
+  }
+  return {raw,item,qty};
+}
+
+function generateSortedOrder(){
+  const day=document.getElementById('sorterDay')?.value||'';
+  const selectedIds=Object.keys(selectedOrderItems);
+  if(!selectedIds.length){alert('Centang minimal satu item terlebih dahulu.');return;}
+  if(!day){alert('Pilih hari pengiriman terlebih dahulu.');return;}
+
+  const missingQty=selectedIds.filter(id=>{
+    const n=parseFloat(String(selectedOrderItems[id]).replace(',','.'));
+    return !Number.isFinite(n) || n<=0;
+  });
+  if(missingQty.length){
+    const names=missingQty.map(id=>db.items.find(i=>i.id===id)?.name).filter(Boolean);
+    alert(`Masih ada ${missingQty.length} item yang belum diisi jumlahnya:\n\n${names.join('\n')}`);
+    return;
+  }
+
+  sorterDay=day;
+  sorterResults=selectedIds.map((id,index)=>{
+    const item=db.items.find(i=>i.id===id);
+    return {
+      index,
+      raw:item?.name||'',
+      item:item?.name||'',
+      qty:String(selectedOrderItems[id]).replace(',','.'),
+      matches:item?[item]:[],
+      selectedId:item?.id||null
+    };
+  }).filter(x=>x.selectedId);
+
+  sorterLines=sorterResults.map(x=>({item:x.item,qty:x.qty}));
+  renderSorterResults();
+}
+
+function renderSorterResults(){
+  const box=document.getElementById('sorterResult'); if(!box)return;
+  const unmatched=sorterResults.filter(x=>x.matches.length===0);
+  const ambiguous=sorterResults.filter(x=>x.matches.length>1 && !x.selectedId);
+  const matched=sorterResults.filter(x=>x.selectedId);
+  const groups={};
+  matched.forEach(x=>{
+    const item=db.items.find(i=>i.id===x.selectedId); if(!item)return;
+    const supplier=getSupplier(item.supplier_id); if(!supplier)return;
+    (groups[supplier.id] ||= {supplier,items:[]}).items.push({x,item});
+  });
+
+  let html=`<div class="title">Hasil Sortiran per Supplier</div>`;
+  if(!matched.length && !unmatched.length && !ambiguous.length){box.innerHTML='';return;}
+  if(unmatched.length) html+=`<div class="error"><b>❌ Item tidak ditemukan (${unmatched.length})</b><br>${unmatched.map(x=>esc(x.item)).join(', ')}<br><span class="muted">Pastikan nama item sama dengan nama di katalog.</span></div>`;
+  if(ambiguous.length) html+=`<div class="notice"><b>⚠️ Ada item dengan lebih dari satu supplier</b><br>Silakan pilih supplier untuk item berikut.</div>`;
+  ambiguous.forEach(x=>{
+    html+=`<div class="item"><div class="itemname">${esc(x.item)}</div><div class="muted">${x.qty?`Jumlah: ${esc(x.qty)}`:'Jumlah belum diisi'}</div>
+      <select onchange="selectSorterSupplier(${x.index},this.value)">
+        <option value="">Pilih supplier...</option>
+        ${x.matches.map(i=>`<option value="${i.id}">${esc(getSupplier(i.supplier_id)?.name||'Supplier')}</option>`).join('')}
+      </select></div>`;
+  });
+
+  Object.values(groups).forEach(g=>{
+    html+=`<div class="panel"><h3 style="margin:0 0 8px">${esc(g.supplier.icon||'📦')} ${esc(g.supplier.name)}</h3>`;
+    g.items.forEach(({x,item})=>{
+      html+=`<div class="itemrow" style="padding:9px 0;border-bottom:1px solid #eee">
+        <div><div class="itemname">${esc(item.name)}</div><div class="unit">${esc(item.unit)}</div></div>
+        <input class="qtyinput" type="number" min="0" step="any" inputmode="decimal" value="${esc(x.qty)}" placeholder="Qty" onchange="updateSorterQty(${x.index},this.value)">
+      </div>`;
+    });
+    html+=`<button class="success" style="width:100%;margin-top:10px" onclick="copySupplierOrder('${g.supplier.id}')">📋 Copy Order ${esc(g.supplier.name)}</button></div>`;
+  });
+
+  const ready=Object.keys(groups).length && !unmatched.length && !ambiguous.length;
+  if(ready) html+=`<button class="primary" style="width:100%;margin-bottom:10px" onclick="copyAllSortedOrders()">📋 Copy Semua Order</button>`;
+  html+=`<button class="secondary" style="width:100%" onclick="clearSorter()">↺ Mulai Lagi</button>`;
+  box.innerHTML=html;
+}
+
+function selectSorterSupplier(index,id){
+  if(sorterResults[index]) sorterResults[index].selectedId=id||null;
+  renderSorterResults();
+}
+
+function updateSorterQty(index,value){
+  if(!sorterResults[index])return;
+  const n=parseFloat(String(value).replace(',','.'));
+  sorterResults[index].qty=Number.isFinite(n)&&n>=0?String(n):'';
+}
+
+function buildSupplierText(supplierId){
+  const supplier=getSupplier(supplierId); if(!supplier)return '';
+  const rows=sorterResults.filter(x=>x.selectedId && db.items.find(i=>i.id===x.selectedId)?.supplier_id===supplierId);
+  const lines=rows.map(x=>{
+    const item=db.items.find(i=>i.id===x.selectedId);
+    return `${item.name} — ${x.qty ? x.qty+' '+item.unit : '(jumlah belum diisi)'}`;
+  }).join('\n');
+  return `🛒 ORDER YELLOWFIT\nSupplier: ${supplier.name}\nHari Pengiriman: ${sorterDay}\n\n${lines}\n\nTerima kasih.`;
+}
+
+async function copySupplierOrder(supplierId){
+  const text=buildSupplierText(supplierId);
+  if(!text)return;
+  const rows=sorterResults.filter(x=>x.selectedId && db.items.find(i=>i.id===x.selectedId)?.supplier_id===supplierId);
+  if(rows.some(x=>!x.qty)){alert('Masih ada item yang belum diisi jumlahnya.');return;}
+  try{await navigator.clipboard.writeText(text);alert('Order berhasil di-copy. Silakan paste ke chat supplier.');}
+  catch(e){prompt('Copy order berikut:',text);}
+}
+
+async function copyAllSortedOrders(){
+  const selected=sorterResults.filter(x=>x.selectedId);
+  if(selected.some(x=>!x.qty)){alert('Masih ada item yang belum diisi jumlahnya.');return;}
+  const supplierIds=[...new Set(selected.map(x=>db.items.find(i=>i.id===x.selectedId)?.supplier_id).filter(Boolean))];
+  const text=supplierIds.map(buildSupplierText).join('\n\n--------------------\n\n');
+  try{await navigator.clipboard.writeText(text);alert('Semua order berhasil di-copy.');}
+  catch(e){prompt('Copy semua order berikut:',text);}
+}
+
+function clearSorter(){sorterLines=[];sorterResults=[];sorterDay='';selectedOrderItems={};renderHome();}
 
 function showSupplier(id){currentSupplier=id;cart={};render()}
 function home(){currentSupplier=null;cart={};render()}
@@ -226,8 +434,9 @@ function manage(){
   <div class="notice">Perubahan di sini tersimpan ke database online dan akan terlihat oleh seluruh purchasing.</div>
   <div class="actions">
     <button class="primary" onclick="newItem()">＋ Tambah Item</button>
-    <button class="secondary" onclick="manageSuppliers()">Supplier</button>
+    <button class="secondary" onclick="importCSV()">📥 Import CSV</button>
   </div>
+  <button class="secondary" style="width:100%;margin-bottom:4px" onclick="manageSuppliers()">🏪 Kelola Supplier</button>
   <input class="search" id="manageSearch" placeholder="🔍 Cari item..." oninput="renderManageItems(this.value)">
   <div id="manageItems"></div>`;
   renderManageItems("");
@@ -248,6 +457,177 @@ function renderManageItems(q){
       <button class="${i.active?'danger':'success'} smallbtn" onclick="toggleItem('${i.id}')">${i.active?'Nonaktifkan':'Aktifkan'}</button>
     </div></div>`;
   }).join("");
+}
+
+
+function importCSV(){
+  document.getElementById("app").innerHTML=`<button class="secondary back" onclick="manage()">← Kelola Katalog</button>
+  <h2>📥 Import Item dari CSV</h2>
+  <div class="notice"><b>Format CSV:</b> satu baris untuk satu item. Gunakan hanya 3 kolom: <b>supplier, item, unit</b>. Item yang diimport otomatis aktif.</div>
+  <div class="csvbox">
+    <b>Contoh isi:</b>
+    <pre style="white-space:pre-wrap;font-size:12px;margin:8px 0 0">supplier,item,unit
+Daging,Dada Fillet,kg
+Daging,Dada Finger,kg
+Pasar,Bawang Merah,kg
+Grosir,BBQ Sauce,botol</pre>
+  </div>
+  <div class="actions">
+    <button class="secondary" onclick="downloadCSVTemplate()">⬇️ Download Template</button>
+  </div>
+  <label>Pilih File CSV</label>
+  <input id="csvFile" type="file" accept=".csv,text/csv" onchange="previewCSV(this.files[0])">
+  <div id="csvPreview"></div>`;
+}
+
+function downloadCSVTemplate(){
+  const csv='supplier,item,unit\nDaging,Dada Fillet,kg,true\nDaging,Dada Finger,kg,true\nPasar,Bawang Merah,kg,true\nFrozen,Jagung Pipil,kg,true\nGrosir,BBQ Sauce,botol,true\n';
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download='yellowfit_item_import_template.csv'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function parseCSV(text){
+  text=text.replace(/^\uFEFF/,'');
+  const firstLine=(text.split(/\r?\n/).find(line=>line.trim()!=='')||'');
+  const commaCount=(firstLine.match(/,/g)||[]).length;
+  const semicolonCount=(firstLine.match(/;/g)||[]).length;
+  const delimiter=semicolonCount>commaCount?';':',';
+
+  const rows=[]; let row=[], cell='', quoted=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i]; const next=text[i+1];
+    if(quoted){
+      if(c==='"' && next==='"'){cell+='"'; i++;}
+      else if(c==='"') quoted=false;
+      else cell+=c;
+    }else{
+      if(c==='"') quoted=true;
+      else if(c===delimiter){row.push(cell);cell='';}
+      else if(c==='\n'){row.push(cell);rows.push(row);row=[];cell='';}
+      else if(c==='\r'){if(next==='\n') i++;row.push(cell);rows.push(row);row=[];cell='';}
+      else cell+=c;
+    }
+  }
+  if(cell!=='' || row.length){row.push(cell);rows.push(row);}
+  return rows.filter(r=>r.some(v=>String(v).trim()!==''));
+}
+
+function normalizeHeader(v){
+  return String(v||'').trim().toLowerCase().replace(/\s+/g,'_');
+}
+
+function csvBool(v){
+  const x=String(v??'').trim().toLowerCase();
+  if(!x)return true;
+  return ['true','1','yes','y','active','aktif'].includes(x);
+}
+
+let pendingCSV=[];
+
+async function previewCSV(file){
+  const box=document.getElementById('csvPreview'); if(!box)return;
+  if(!file){box.innerHTML='';return;}
+  try{
+    const text=await file.text();
+    const rows=parseCSV(text);
+    if(rows.length<2) throw new Error('CSV tidak memiliki data item.');
+    const headers=rows[0].map(normalizeHeader);
+    const supplierIdx=headers.findIndex(h=>['supplier','suppliers','nama_supplier'].includes(h));
+    const itemIdx=headers.findIndex(h=>['item','nama_item','name','nama'].includes(h));
+    const unitIdx=headers.findIndex(h=>['unit','satuan'].includes(h));
+    if(supplierIdx<0 || itemIdx<0 || unitIdx<0) throw new Error('Kolom wajib tidak lengkap. Gunakan 3 kolom: supplier, item, unit.');
+
+    pendingCSV=rows.slice(1).map((r,n)=>{
+      const supplierName=String(r[supplierIdx]??'').trim();
+      const itemName=String(r[itemIdx]??'').trim();
+      const unit=String(r[unitIdx]??'').trim()||'unit';
+      const active=true;
+      const supplier=db.suppliers.find(s=>s.name.trim().toLowerCase()===supplierName.toLowerCase());
+      let error='';
+      if(!supplierName) error='Supplier kosong';
+      else if(!supplier) error=`Supplier "${supplierName}" tidak ditemukan`;
+      else if(!itemName) error='Nama item kosong';
+      return {line:n+2,supplierName,itemName,unit,active,supplier,error};
+    });
+
+    // Detect duplicate item+supplier pairs inside the CSV itself.
+    const seenCSV=new Map();
+    pendingCSV.forEach(x=>{
+      if(x.error || !x.supplier) return;
+      const key=x.supplier.id+'::'+x.itemName.trim().toLowerCase();
+      if(seenCSV.has(key)){
+        x.error=`Duplikat di CSV (sama dengan baris ${seenCSV.get(key)})`;
+      }else{
+        seenCSV.set(key,x.line);
+      }
+    });
+
+    // Mark rows that already exist in the online database, without treating them as errors.
+    pendingCSV.forEach(x=>{
+      if(x.error || !x.supplier) return;
+      const existing=db.items.find(i=>i.supplier_id===x.supplier.id && i.name.trim().toLowerCase()===x.itemName.trim().toLowerCase());
+      if(existing) x.existing=true;
+    });
+
+    const valid=pendingCSV.filter(x=>!x.error).length;
+    const invalid=pendingCSV.length-valid;
+    const newCount=pendingCSV.filter(x=>!x.error && !x.existing).length;
+    const updateCount=pendingCSV.filter(x=>!x.error && x.existing).length;
+    const duplicateCount=pendingCSV.filter(x=>x.error && x.error.startsWith('Duplikat di CSV')).length;
+    const otherErrorCount=invalid-duplicateCount;
+    const shown=pendingCSV.slice(0,100);
+    box.innerHTML=`<div class="successbox">
+        <b>${newCount}</b> item baru · <b>${updateCount}</b> item akan diperbarui
+        ${duplicateCount?` · <b>${duplicateCount}</b> duplikat dalam CSV`:''}
+        ${otherErrorCount?` · <b>${otherErrorCount}</b> error`:''}
+      </div>
+      <div class="notice" style="margin-top:10px">
+        Item yang sudah ada <b>tidak dibuat ulang</b>; datanya akan diperbarui.
+        Duplikat di dalam file CSV harus diperbaiki sebelum import.
+      </div>
+      <div class="csvpreview"><table class="csvtable"><thead><tr><th>Baris</th><th>Supplier</th><th>Item</th><th>Unit</th><th>Status</th></tr></thead><tbody>
+      ${shown.map(x=>`<tr class="${x.error?'badrow':(x.existing?'':'goodrow')}"><td>${x.line}</td><td>${esc(x.supplierName)}</td><td>${esc(x.itemName)}</td><td>${esc(x.unit)}</td><td>${esc(x.error||(x.existing?'Sudah ada → akan diperbarui':'Item baru'))}</td></tr>`).join('')}</tbody></table></div>
+      ${pendingCSV.length>100?'<div class="muted" style="margin-top:8px">Preview menampilkan 100 baris pertama.</div>':''}
+      <div class="actions"><button class="primary" ${invalid?'disabled':''} onclick="runCSVImport()">📥 Import ${valid} Item</button><button class="secondary" onclick="importCSV()">Batal</button></div>`;
+  }catch(e){
+    pendingCSV=[];
+    box.innerHTML=`<div class="error">${esc(e.message||'CSV tidak dapat dibaca.')}</div>`;
+  }
+}
+
+async function runCSVImport(){
+  const rows=pendingCSV.filter(x=>!x.error);
+  if(!rows.length){alert('Tidak ada item yang siap diimport.');return}
+  const btns=document.querySelectorAll('#csvPreview button');btns.forEach(b=>b.disabled=true);
+  try{
+    const inserts=[]; const updates=[];
+    const seenRun=new Set();
+    for(const r of rows){
+      const key=r.supplier.id+'::'+r.itemName.trim().toLowerCase();
+      if(seenRun.has(key)) continue;
+      seenRun.add(key);
+      const existing=db.items.find(i=>i.supplier_id===r.supplier.id && i.name.trim().toLowerCase()===r.itemName.trim().toLowerCase());
+      if(existing) updates.push({id:existing.id,name:r.itemName,unit:r.unit,active:r.active});
+      else inserts.push({name:r.itemName,supplier_id:r.supplier.id,unit:r.unit,active:r.active});
+    }
+    if(inserts.length){
+      const {error}=await client.from('items').insert(inserts);
+      if(error)throw error;
+    }
+    for(const u of updates){
+      const {error}=await client.from('items').update({name:u.name,unit:u.unit,active:u.active}).eq('id',u.id);
+      if(error)throw error;
+    }
+    await refreshAndRender();
+    alert(`Import selesai. ${inserts.length} item baru ditambahkan dan ${updates.length} item yang sudah ada diperbarui.`);
+    manage();
+  }catch(e){
+    console.error(e);
+    alert('Import gagal: '+(e.message||'Unknown error')+'\n\nJika sebagian data sudah masuk, cek katalog sebelum mencoba lagi.');
+    btns.forEach(b=>b.disabled=false);
+  }
 }
 
 function newItem(){itemForm(null)}
